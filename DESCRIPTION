@@ -19,3 +19,4 @@ Imports:
 Depends:
     R (>= 4.0.0)
 BugReports: https://github.com/Im-a-scRiptR/tayloR/issues
+URL: https://github.com/Im-a-scRiptR/tayloR
