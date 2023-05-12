@@ -16,7 +16,7 @@
 #' x - a raised to a power of n+1 all divided by the factorial of n+1
 #' @export
 R_nx <-
-  \(df_np1, x, n, a) {
+  function(df_np1, x, n, a) {
     (abs(eval(df_np1, list(x = x))) / factorial(n)) * (abs(x - a) ^ (n))
   }
 
@@ -35,64 +35,77 @@ R_nx <-
 #' at the moment. The default variable name is "x".
 #' @param open_closed Whether or not the interval defined by sequence
 #' from intr_start to intr_end
+#' @importFrom dplyr `%>%`
 #' @export
 make_taylor_series <-
-  \(
-    f,
-    num_derivs,
-    center,
-    intr_start,
-    intr_end,
-    var_name = "x",
-    open_closed = "closed"
-  ) {
+  function(f,
+           num_derivs,
+           center,
+           intr_start,
+           intr_end,
+           var_name = "x",
+           open_closed = "closed") {
+
     # Redefine terms
     a <- center
     c <- intr_start
     d <- intr_end
 
-    # Parse Body of supplied function
-    exprn <-
-      body(f) %>%
-      as.character() %>%
-      .[[2]] %>%
-      parse(text = .)
-
-    # Run the symbolic differentiation
-    d_list <- list()
-    for (i in seq_along(1:(num_derivs + 1))) {
-      if (i == 1) {
-        d_list[[i]] <- exprn %>% .[[1]]
-      } else if (i == 2) {
-        d_list[[i]] <- exprn %>% stats::D(var_name)
+    # Format the function for processing
+    # If f is already a function, it will pull out the body else. Stop if the
+    # supplied expression is not of class character or function
+    if(is.function(f)) {
+      if(length(body(f)) > 1) {
+        f <- body(f)[[2L]]
       } else {
-        d_list[[i]] <- d_list[[i - 1]] %>% stats::D(var_name)
+        f <- body(f)
+      }
+    } else if(is.character(f)) {
+      f <- str2lang(f)
+    } else {
+      stop("Supplied expression must be of class character or function")
+    }
+
+    # Make an empty derivatives list
+    d_list <- list()
+    # Pre-fill the list
+    d_list[[1]] <- f
+    d_list[[2]] <- stats::D(d_list[[1]],var_name)
+
+    # Finish up the symbolic successive differentiation(s)
+    if(num_derivs >= 3) {
+      for(i in 3:(num_derivs + 1)) {
+        d_list[[i]] <- stats::D(d_list[[i - 1]],var_name)
       }
     }
-    test <- f(a)
+
+    # Evaluate f at the center to check for NA, Inf, or NaN and make a mild correction
+    test <- eval(f,list(x = a))
     center_check <- is.na(test) | is.infinite(test) | is.nan(test)
     if (center_check) {
       a <- a + 1e-6
     }
+
     # Calculate the terms for the Taylor series
     call_tbl <-
       tibble::tibble(n = 0:(length(d_list) - 1)) %>%
       dplyr::mutate(a = a, call = d_list) %>%
       dplyr::rowwise() %>%
       dplyr::mutate(term_1 = eval(call, list(x = a)) / factorial(n)) %>%
+      dplyr::select(-call) %>%
       dplyr::mutate(
         term_2 =
           glue::glue("(", "(x-a)^", "{n})") %>%
           stringr::str_replace("\\ba\\b", as.character(a)),
         T_n = paste0(as.character(term_1), " * ", term_2)
       ) %>%
-      dplyr::mutate(expr_T_n = list(parse(text = T_n))) %>%
+      dplyr::select(-starts_with("term")) %>%
       dplyr::ungroup()
 
     # Combine terms into one Taylor Series
-    T_n <- call_tbl$T_n %>% paste(collapse = " + ")
+    T_n <- paste(call_tbl$T_n,collapse = " + ")
 
-    # Differentiate the last derivative we calculated
+    # Make the n+1th derivative for the R_nx function
     df_np1 <- stats::D(d_list[[length(d_list)]], name = var_name)
 
     # Correct for interval openess if needed
@@ -114,40 +127,44 @@ make_taylor_series <-
       dplyr::slice_max(f) %>%
       dplyr::slice_max(x)
 
-
     # Plot the remainder function
     R_plot <-
       tibble::tibble(x = test_interval) %>%
       dplyr::rowwise() %>%
       dplyr::mutate(R = R_nx(df_np1, x, length(d_list), a)) %>%
       dplyr::ungroup() %>%
-      ggplot(aes(x, R)) + geom_line() +
-      ggtitle(glue::glue("Remainder for f^{num_derivs}({var_name})"))
+      ggplot2::ggplot(ggplot2::aes(x, R)) + ggplot2::geom_line() +
+      ggplot2::ggtitle(glue::glue("Remainder for f^{num_derivs}({var_name})"))
+
+    # Calculate the error for the Taylor Expansion
+    error <-
+      (vals$f / factorial(length(d_list))) * abs(vals$x - a) ^ (length(d_list))
 
     # Return Taylor Series, its error, and the remainder plot
-    return(list(
-      T_n = T_n,
-      taylor_error = (vals$f / factorial(length(d_list))) * abs(vals$x - a) ^
-        (length(d_list)),
+    list(
+      T_n             = T_n,
+      taylor_error    = error,
       remainder_graph = R_plot
-    ))
+    )
   }
 
-# Testing   ----
+# Testing
 
-# f <- \(x) {
-#   sin(x)
-# }
-#
+# Works with
+
+# f <- \(x) {sin(x)}
+# f <- \(x) sin(x)
+# f <- "sin(x)"
+
 # taylor <-
 #   make_taylor_series(
 #     f,
-#     num_derivs   = 10,
-#     center       = 0,
-#     intr_start   = -0.5,
-#     intr_end     = 0.5,
+#     num_derivs   = 4,
+#     center       = pi/6,
+#     intr_start   = 0,
+#     intr_end     = pi/3,
 #     var_name     = "x",
 #     open_closed  = "closed"
 #   )
-#
+
 # taylor$taylor_error
